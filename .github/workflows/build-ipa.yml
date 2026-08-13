@@ -21,39 +21,42 @@ jobs:
           chmod +x ./downloadFrameworks.sh
           ./downloadFrameworks.sh
 
-      - name: Build App Bundle (.app)
+      - name: Auto Generate Shared Scheme
         run: |
-          # 1. 自動獲取專案內第一個 Target 名稱 (使用 Target 替代 Scheme)
-          TARGET_NAME=$(xcodebuild -list -project Code.xcodeproj | awk '/Targets:/{flag=1; next} /Build Configurations:/{flag=0} flag' | head -n 1 | xargs)
-          echo "Target 名稱: $TARGET_NAME"
+          # 安裝 xcodeproj 工具並自動生成 Code.xcscheme 檔案
+          sudo gem install xcodeproj
+          ruby -e "
+            require 'xcodeproj'
+            proj_path = 'Code.xcodeproj'
+            project = Xcodeproj::Project.open(proj_path)
+            target = project.targets.find { |t| t.name == 'Code' } || project.targets.first
+            scheme = Xcodeproj::XCScheme.new
+            scheme.add_build_target(target)
+            scheme.save_as(proj_path, 'Code', true)
+            puts '成功生成 Scheme: Code.xcscheme'
+          "
 
-          # 2. 使用 -target 直接 Compile，完全不需要 Scheme
-          xcodebuild build \
+      - name: Build Archive
+        run: |
+          xcodebuild archive \
             -project Code.xcodeproj \
-            -target "$TARGET_NAME" \
-            -sdk iphoneos \
+            -scheme Code \
+            -destination 'generic/platform=iOS' \
             -configuration Release \
-            -derivedDataPath ./build_output \
+            -archivePath build/CodeApp.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_IDENTITY=""
 
       - name: Package IPA
         run: |
-          # 建立標準 IPA 結構
-          mkdir -p Payload
-
-          # 尋找產生的 .app 目錄並複製入 Payload
-          APP_PATH=$(find ./build_output -name "*.app" -type d | head -n 1)
-          echo "找到 App 目錄: $APP_PATH"
-          
-          cp -R "$APP_PATH" Payload/
-
-          # 壓縮為 CodeApp.ipa
+          mkdir -p build/Payload
+          cp -r build/CodeApp.xcarchive/Products/Applications/*.app build/Payload/
+          cd build
           zip -r CodeApp.ipa Payload
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CodeApp-Unsigned-IPA
-          path: CodeApp.ipa
+          path: build/CodeApp.ipa
