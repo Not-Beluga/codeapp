@@ -23,7 +23,6 @@ jobs:
 
       - name: Auto Generate Shared Scheme
         run: |
-          # 安裝 xcodeproj 工具並自動生成 Code.xcscheme 檔案
           sudo gem install xcodeproj
           ruby -e "
             require 'xcodeproj'
@@ -33,8 +32,27 @@ jobs:
             scheme = Xcodeproj::XCScheme.new
             scheme.add_build_target(target)
             scheme.save_as(proj_path, 'Code', true)
-            puts '成功生成 Scheme: Code.xcscheme'
+            puts 'Successfully created Scheme: Code.xcscheme'
           "
+
+      - name: Inject Stub AppIcon Set
+        run: |
+          # Locate Assets.xcassets directory and create Iconv2 stub
+          ASSET_PATH=$(find . -name "Assets.xcassets" -type d | head -n 1)
+          ICON_DIR="$ASSET_PATH/Iconv2.appiconset"
+          mkdir -p "$ICON_DIR"
+          
+          cat << 'EOF' > "$ICON_DIR/Contents.json"
+          {
+            "images" : [
+              { "idiom" : "iphone", "size" : "60x60", "scale" : "2x" },
+              { "idiom" : "iphone", "size" : "60x60", "scale" : "3x" },
+              { "idiom" : "ios-marketing", "size" : "1024x1024", "scale" : "1x" }
+            ],
+            "info" : { "version" : 1, "author" : "xcode" }
+          }
+          EOF
+          echo "Created stub Iconv2 asset at $ICON_DIR"
 
       - name: Build Archive
         run: |
