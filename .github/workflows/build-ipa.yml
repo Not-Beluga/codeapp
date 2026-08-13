@@ -21,36 +21,39 @@ jobs:
           chmod +x ./downloadFrameworks.sh
           ./downloadFrameworks.sh
 
-      - name: Autocreate Xcode Schemes
+      - name: Build App Bundle (.app)
         run: |
-          # 強制 Xcode 為專案自動建立 Shared Schemes，避免 Scheme 遺失
-          xcodebuild -autocreateSchemes -project Code.xcodeproj
-          # 列出所有可用的 Scheme 方便在 Log 查看
-          xcodebuild -list -project Code.xcodeproj
+          # 1. 自動獲取專案內第一個 Target 名稱 (使用 Target 替代 Scheme)
+          TARGET_NAME=$(xcodebuild -list -project Code.xcodeproj | awk '/Targets:/{flag=1; next} /Build Configurations:/{flag=0} flag' | head -n 1 | xargs)
+          echo "Target 名稱: $TARGET_NAME"
 
-      - name: Build Unsigned IPA
-        run: |
-          mkdir -p build/Build/Products/Release-iphoneos/Payload
-          
-          # 自動抓取 project 裡面第一個可用的 scheme 名稱進行編譯
-          SCHEME_NAME=$(xcodebuild -list -project Code.xcodeproj | awk '/Schemes:/{flag=1; next} /^[[:space:]]*$/{flag=0} flag' | head -n 1 | xargs)
-          echo "Detected Scheme: $SCHEME_NAME"
-
-          xcodebuild archive \
+          # 2. 使用 -target 直接 Compile，完全不需要 Scheme
+          xcodebuild build \
             -project Code.xcodeproj \
-            -scheme "$SCHEME_NAME" \
-            -destination 'generic/platform=iOS' \
+            -target "$TARGET_NAME" \
+            -sdk iphoneos \
             -configuration Release \
-            -archivePath build/CodeApp.xcarchive \
+            -derivedDataPath ./build_output \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY=""
 
-          cp -r build/CodeApp.xcarchive/Products/Applications/*.app build/Build/Products/Release-iphoneos/Payload/
-          cd build/Build/Products/Release-iphoneos/
+      - name: Package IPA
+        run: |
+          # 建立標準 IPA 結構
+          mkdir -p Payload
+
+          # 尋找產生的 .app 目錄並複製入 Payload
+          APP_PATH=$(find ./build_output -name "*.app" -type d | head -n 1)
+          echo "找到 App 目錄: $APP_PATH"
+          
+          cp -R "$APP_PATH" Payload/
+
+          # 壓縮為 CodeApp.ipa
           zip -r CodeApp.ipa Payload
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CodeApp-Unsigned-IPA
-          path: build/Build/Products/Release-iphoneos/CodeApp.ipa
+          path: CodeApp.ipa
