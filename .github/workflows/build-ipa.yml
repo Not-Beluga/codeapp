@@ -26,12 +26,12 @@ jobs:
           # 建立 Payload 目錄結構
           mkdir -p build/Build/Products/Release-iphoneos/Payload
           
-          # 直接使用 xcodebuild，完全不經 Fastlane，避免 Ruby 3.4 報錯
+          # 將 -scheme 改為 CodeApp，並指定 generic/platform=iOS
           xcodebuild archive \
             -project Code.xcodeproj \
-            -scheme Code \
+            -scheme CodeApp \
+            -destination 'generic/platform=iOS' \
             -configuration Release \
-            -sdk iphoneos \
             -archivePath build/CodeApp.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
