@@ -23,8 +23,10 @@ jobs:
 
       - name: Build Unsigned IPA
         run: |
+          # 建立 Payload 目錄結構
           mkdir -p build/Build/Products/Release-iphoneos/Payload
           
+          # 直接使用 xcodebuild，完全不經 Fastlane，避免 Ruby 3.4 報錯
           xcodebuild archive \
             -project Code.xcodeproj \
             -scheme Code \
@@ -34,6 +36,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
+          # 打包為 .ipa
           cp -r build/CodeApp.xcarchive/Products/Applications/Code.app build/Build/Products/Release-iphoneos/Payload/
           cd build/Build/Products/Release-iphoneos/
           zip -r CodeApp.ipa Payload
