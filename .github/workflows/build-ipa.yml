@@ -21,23 +21,31 @@ jobs:
           chmod +x ./downloadFrameworks.sh
           ./downloadFrameworks.sh
 
+      - name: Autocreate Xcode Schemes
+        run: |
+          # 強制 Xcode 為專案自動建立 Shared Schemes，避免 Scheme 遺失
+          xcodebuild -autocreateSchemes -project Code.xcodeproj
+          # 列出所有可用的 Scheme 方便在 Log 查看
+          xcodebuild -list -project Code.xcodeproj
+
       - name: Build Unsigned IPA
         run: |
-          # 建立 Payload 目錄結構
           mkdir -p build/Build/Products/Release-iphoneos/Payload
           
-          # 將 -scheme 改為 CodeApp，並指定 generic/platform=iOS
+          # 自動抓取 project 裡面第一個可用的 scheme 名稱進行編譯
+          SCHEME_NAME=$(xcodebuild -list -project Code.xcodeproj | awk '/Schemes:/{flag=1; next} /^[[:space:]]*$/{flag=0} flag' | head -n 1 | xargs)
+          echo "Detected Scheme: $SCHEME_NAME"
+
           xcodebuild archive \
             -project Code.xcodeproj \
-            -scheme CodeApp \
+            -scheme "$SCHEME_NAME" \
             -destination 'generic/platform=iOS' \
             -configuration Release \
             -archivePath build/CodeApp.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
-          # 打包為 .ipa
-          cp -r build/CodeApp.xcarchive/Products/Applications/Code.app build/Build/Products/Release-iphoneos/Payload/
+          cp -r build/CodeApp.xcarchive/Products/Applications/*.app build/Build/Products/Release-iphoneos/Payload/
           cd build/Build/Products/Release-iphoneos/
           zip -r CodeApp.ipa Payload
 
