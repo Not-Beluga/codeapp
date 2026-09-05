@@ -9,9 +9,9 @@
       "name": "Code App",
       "bundleIdentifier": "thebaselab.VS-Code",
       "developerName": "thebaselab",
-      "subtitle": "[Waiting to be added]",
-      "localizedDescription": "[Waiting to be added]",
-      "iconURL": "https://raw.githubusercontent.com/username/repo/main/icons/app-icon.png",
+      "subtitle": "Visual Code Studio on iPad by thebaselab",
+      "localizedDescription": "Visual Code Studio on iPad by thebaselab",
+      "iconURL": "https://code.thebaselab.com/~gitbook/image?url=https%3A%2F%2F2795973332-files.gitbook.io%2F%7E%2Ffiles%2Fv0%2Fb%2Fgitbook-x-prod.appspot.com%2Fo%2Fspaces%252FzNRZttJUHODcLjBFRZHP%252Ficon%252FSdQ6kQQIZ9j34P2N8lpQ%252Ficon.png%3Falt%3Dmedia%26token%3D241051e1-df50-41a0-a989-6110631a52f4&width=32&dpr=3&quality=100&sign=b15d5c4da9ca96a1b96de92647e16544&sv=3",
       "tintColor": "007AFF",
       "versions": [
         {
