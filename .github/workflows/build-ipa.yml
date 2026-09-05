@@ -33,18 +33,23 @@ jobs:
             echo "✅ 成功找到 Node 核心框架: $NODE_FW"
           fi
 
-      - name: Auto Generate Shared Scheme
+      # 【修正 1】將所有 Targets (包含 NodeExtension) 加入 Scheme
+      - name: Auto Generate Shared Scheme (All Targets)
         run: |
           sudo gem install xcodeproj
           ruby -e "
             require 'xcodeproj'
             proj_path = 'Code.xcodeproj'
             project = Xcodeproj::Project.open(proj_path)
-            target = project.targets.find { |t| t.name == 'Code' } || project.targets.first
             scheme = Xcodeproj::XCScheme.new
-            scheme.add_build_target(target)
+            
+            project.targets.each do |target|
+              scheme.add_build_target(target)
+              puts \"Added target: #{target.name}\"
+            end
+            
             scheme.save_as(proj_path, 'Code', true)
-            puts 'Successfully created Scheme: Code.xcscheme'
+            puts 'Successfully created Scheme: Code.xcscheme with all targets'
           "
 
       - name: Inject Stub AppIcon Set
@@ -106,46 +111,48 @@ jobs:
             fi
           done
 
-          # 3. 同步 NodeJS 資源，但不包含原始 xcframework 資料夾
+          # 3. 同步完整 NodeJS 資源目錄進 App Bundle
           if [ -d "./Resources/NodeJS" ]; then
             cp -R ./Resources/NodeJS "$APP_PATH/"
             echo "已同步 NodeJS 資源目錄進 App Bundle"
           fi
 
-      # 【關鍵修復】清理所有導致簽名失敗嘅垃圾檔及 dSYM
-      - name: Clean Sign-Blocking Artifacts (dSYMs, Simulator Slices, XCFrameworks)
+      # 【修正 2】精準清理：只刪除 SimulatorSlice 與 dSYM，保留 NodeJS/NodeMobile.xcframework/ios-arm64
+      - name: Clean Sign-Blocking Artifacts (Preserve XCFramework arm64 structure)
         run: |
           APP_PATH=$(find build/CodeApp.xcarchive/Products/Applications -name "*.app" | head -n 1)
-          echo "=== 開始清理會干擾簽名嘅檔案 ==="
+          echo "=== 開始精準清理干擾簽名的檔案 ==="
           
-          # 刪除 App Bundle 內殘留嘅 raw .xcframework 資料夾
-          find "$APP_PATH" -name "*.xcframework" -exec rm -rf {} + || true
+          # 只刪除含有 simulator 名字的資料夾（如 ios-arm64-simulator）
+          find "$APP_PATH" -type d -name "*simulator*" -exec rm -rf {} + || true
           
-          # 刪除所有 .dSYM 檔
-          find "$APP_PATH" -name "*.dSYM" -exec rm -rf {} + || true
-          
-          # 刪除所有包含 simulator 嘅架構檔
-          find "$APP_PATH" -name "*simulator*" -exec rm -rf {} + || true
+          # 刪除所有 .dSYM 調試符號資料夾
+          find "$APP_PATH" -type d -name "*.dSYM" -exec rm -rf {} + || true
           
           # 刪除 macOS 系統垃圾檔
           find "$APP_PATH" -name "__MACOSX" -exec rm -rf {} + || true
           find "$APP_PATH" -name ".DS_Store" -exec rm -rf {} + || true
           
-          echo "✅ 清理完畢！"
+          echo "✅ 精準清理完畢！"
 
       - name: Safety Check 3 - Final IPA Payload Audit
         run: |
           APP_PATH=$(find build/CodeApp.xcarchive/Products/Applications -name "*.app" | head -n 1)
-          TARGET_NODE_FW="$APP_PATH/Frameworks/NodeMobile.framework"
           
           echo "=== 執行最終 App 內容物清查 ==="
+          echo "Frameworks 內容："
           ls -la "$APP_PATH/Frameworks"
           
-          if [ -d "$TARGET_NODE_FW" ]; then
-            echo "✅ 【驗證通過】NodeMobile.framework 已確實存於 $TARGET_NODE_FW"
-            lipo -info "$TARGET_NODE_FW/NodeMobile" || true
+          echo "NodeJS 資源內容："
+          find "$APP_PATH/NodeJS" -maxdepth 4 || true
+          
+          TARGET_NODE_FW="$APP_PATH/Frameworks/NodeMobile.framework"
+          NODEJS_XCFW=$(find "$APP_PATH/NodeJS" -name "NodeMobile.framework" | head -n 1)
+          
+          if [ -d "$TARGET_NODE_FW" ] && [ -n "$NODEJS_XCFW" ]; then
+            echo "✅ 【驗證通過】NodeMobile 已成功放置於 Frameworks/ 及 NodeJS/ 路徑！"
           else
-            echo "❌ 【驗證失敗】App Bundle 內依然缺失 NodeMobile.framework！"
+            echo "❌ 【驗證失敗】NodeMobile 檔案缺失，打包中斷！"
             exit 1
           fi
 
