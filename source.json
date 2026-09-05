@@ -1,16 +1,16 @@
 {
   "name": "Code App Source",
-  "identifier": "com.yourname.source",
+  "identifier": "com.thebaseapp.codeapp",
   "meta": {
     "description": "[Non-Official/Testing] A custom source for Code App."
   },
   "apps": [
     {
       "name": "Code App",
-      "bundleIdentifier": "com.yourname.mycoolapp",
-      "developerName": "Your Name",
-      "subtitle": "A short tagline for the app",
-      "localizedDescription": "Detailed description of what the app does.",
+      "bundleIdentifier": "thebaselab.VS-Code",
+      "developerName": "thebaselab",
+      "subtitle": "[Waiting to be added]",
+      "localizedDescription": "[Waiting to be added]",
       "iconURL": "https://raw.githubusercontent.com/username/repo/main/icons/app-icon.png",
       "tintColor": "007AFF",
       "versions": [
