@@ -1,4 +1,4 @@
-name: Build CodeApp IPA
+name: Build CodeApp IPA (Ultra-Safe)
 
 on:
   workflow_dispatch:
@@ -21,22 +21,18 @@ jobs:
           chmod +x ./downloadFrameworks.sh
           ./downloadFrameworks.sh
 
-      - name: Verify Frameworks Download
+      # 【防線 1】下載結果深層驗證
+      - name: Safety Check 1 - Verify Node & Critical Frameworks
         run: |
-          echo "=== 檢查下載返黎嘅運行庫 / Frameworks ==="
-          ls -la
+          echo "=== 正在驗證 ARM64 核心 Frameworks ==="
+          NODE_FW=$(find . -path "*/ios-arm64/NodeMobile.framework" -o -path "*/ios-arm64_arm64e/NodeMobile.framework" | head -n 1)
           
-          # 檢查是否有成功下載任何 .framework 或相關 runtime 檔案
-          FRAMEWORK_COUNT=$(find . -name "*.framework" | wc -l)
-          echo "偵測到嘅 .framework 數量: $FRAMEWORK_COUNT"
-          find . -name "*.framework" || true
-          
-          if [ "$FRAMEWORK_COUNT" -eq 0 ]; then
-            echo "❌ 警告：搵唔到任何 .framework 檔案！nodejs-mobile 或相關 runtime 可能未成功下載。"
-            # 如果你發覺即使冇 framework 都要硬行 build，可以暫時移除下面呢行 exit 1
+          if [ -z "$NODE_FW" ]; then
+            echo "❌ 嚴重錯誤：搵唔到適用於 iOS Device (arm64) 嘅 NodeMobile.framework！"
+            echo "請檢查 downloadFrameworks.sh 是否下載失敗或結構有變。"
             exit 1
           else
-            echo "✅ 驗證成功：成功檢測到所需的 Framework 檔案！"
+            echo "✅ 成功找到 Node 核心框架: $NODE_FW"
           fi
 
       - name: Auto Generate Shared Scheme
@@ -55,7 +51,6 @@ jobs:
 
       - name: Inject Stub AppIcon Set
         run: |
-          # Locate Assets.xcassets directory and create Iconv2 stub
           ASSET_PATH=$(find . -name "Assets.xcassets" -type d | head -n 1)
           ICON_DIR="$ASSET_PATH/Iconv2.appiconset"
           mkdir -p "$ICON_DIR"
@@ -83,6 +78,59 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_IDENTITY=""
+
+      # 【防線 2】強制補全及注入所有缺失的 Frameworks
+      - name: Safety Check 2 - Force Embed All Frameworks into App Bundle
+        run: |
+          APP_PATH=$(find build/CodeApp.xcarchive/Products/Applications -name "*.app" | head -n 1)
+          echo "目標 App Bundle 路徑: $APP_PATH"
+          
+          FRAMEWORKS_DIR="$APP_PATH/Frameworks"
+          mkdir -p "$FRAMEWORKS_DIR"
+
+          echo "=== 開始強制注入 NodeMobile.framework 及所有關聯庫 ==="
+          
+          # 1. 強制複製 NodeMobile.framework
+          NODE_SRC=$(find ./Resources -name "NodeMobile.framework" | grep -v "simulator" | head -n 1)
+          if [ -n "$NODE_SRC" ]; then
+            echo "複製 NodeMobile.framework 來自: $NODE_SRC"
+            cp -R "$NODE_SRC" "$FRAMEWORKS_DIR/"
+          else
+            echo "❌ 找不到原生 NodeMobile.framework！"
+            exit 1
+          fi
+
+          # 2. 自動搜尋並強制嵌入所有 Resources 下的 ios-arm64 Frameworks (Terminal, Python, PHP, LLVM 等)
+          find ./Resources -name "*.framework" | grep -v "simulator" | grep -v "maccatalyst" | while read -r fw; do
+            fw_name=$(basename "$fw")
+            if [ ! -d "$FRAMEWORKS_DIR/$fw_name" ]; then
+              cp -R "$fw" "$FRAMEWORKS_DIR/"
+              echo "已補全嵌入框架: $fw_name"
+            fi
+          done
+
+          # 3. 確保 NodeJS 資源夾同步進 App 根目錄
+          if [ -d "./Resources/NodeJS" ]; then
+            cp -R ./Resources/NodeJS "$APP_PATH/"
+            echo "已同步 NodeJS 資源目錄進 App Bundle"
+          fi
+
+      # 【防線 3】IPA 打包前終極結構審核
+      - name: Safety Check 3 - Final IPA Payload Audit
+        run: |
+          APP_PATH=$(find build/CodeApp.xcarchive/Products/Applications -name "*.app" | head -n 1)
+          TARGET_NODE_FW="$APP_PATH/Frameworks/NodeMobile.framework"
+          
+          echo "=== 執行最終 App 內容物清查 ==="
+          ls -la "$APP_PATH/Frameworks"
+          
+          if [ -d "$TARGET_NODE_FW" ]; then
+            echo "✅ 【驗證通過】NodeMobile.framework 已確實存於 $TARGET_NODE_FW"
+            lipo -info "$TARGET_NODE_FW/NodeMobile" || true
+          else
+            echo "❌ 【驗證失敗】App Bundle 內依然缺失 NodeMobile.framework，打包中斷！"
+            exit 1
+          fi
 
       - name: Package IPA
         run: |
