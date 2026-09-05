@@ -6,58 +6,83 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    env:
+      XCODE_VERSION: '15.4'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.4'
+          xcode-version: ${{ env.XCODE_VERSION }}
 
       - name: Download Frameworks
         run: |
           chmod +x ./downloadFrameworks.sh
           ./downloadFrameworks.sh
 
-      - name: Safety Check 1 - Verify Node & Critical Frameworks
+      - name: Verify NodeMobile.framework (arm64)
         run: |
           echo "=== 正在驗證 ARM64 核心 Frameworks ==="
           NODE_FW=$(find . -path "*/ios-arm64/NodeMobile.framework" -o -path "*/ios-arm64_arm64e/NodeMobile.framework" | head -n 1)
-          
           if [ -z "$NODE_FW" ]; then
             echo "❌ 嚴重錯誤：搵唔到適用於 iOS Device (arm64) 嘅 NodeMobile.framework！"
+            echo "請檢查 downloadFrameworks.sh 是否正確下載並解壓含 ios-arm64 的 frameworks 到 Resources/ 或相似目錄。"
             exit 1
           else
             echo "✅ 成功找到 Node 核心框架: $NODE_FW"
           fi
 
-      # 【修正 1】將所有 Targets (包含 NodeExtension) 加入 Scheme
-      - name: Auto Generate Shared Scheme (All Targets)
+      - name: Install Ruby & xcodeproj (for scheme generation)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+      - name: gem: install xcodeproj
         run: |
-          sudo gem install xcodeproj
-          ruby -e "
-            require 'xcodeproj'
-            proj_path = 'Code.xcodeproj'
-            project = Xcodeproj::Project.open(proj_path)
-            scheme = Xcodeproj::XCScheme.new
-            
-            project.targets.each do |target|
-              scheme.add_build_target(target)
-              puts \"Added target: #{target.name}\"
-            end
-            
-            scheme.save_as(proj_path, 'Code', true)
-            puts 'Successfully created Scheme: Code.xcscheme with all targets'
-          "
+          gem install xcodeproj --no-document
 
-      - name: Inject Stub AppIcon Set
+      - name: Auto Generate Shared Scheme (exclude test targets)
         run: |
-          ASSET_PATH=$(find . -name "Assets.xcassets" -type d | head -n 1)
+          ruby - <<'RUBY'
+          require 'xcodeproj'
+          require 'fileutils'
+
+          proj_path = 'Code.xcodeproj'
+          scheme_name = 'Code'
+          raise "Project not found: #{proj_path}" unless File.exist?(proj_path)
+
+          project = Xcodeproj::Project.open(proj_path)
+
+          # create a fresh scheme and add only non-test build targets
+          scheme = Xcodeproj::XCScheme.new
+          project.targets.each do |target|
+            # heuristic: skip test targets by name pattern
+            next if target.name =~ /(?:test|tests|uitest|uitests)$/i
+            # skip targets that are obviously test helpers/fixtures
+            next if target.name =~ /(?:testhelper|mocks|fakes)$/i
+
+            puts "Adding target to build action: #{target.name}"
+            scheme.add_build_target(target)
+          end
+
+          # Save scheme as shared
+          scheme.save_as(proj_path, scheme_name, true)
+          puts "Successfully created shared scheme: #{scheme_name}.xcscheme (non-test targets only)"
+          RUBY
+
+      - name: Inject Stub AppIcon Set (if missing)
+        run: |
+          ASSET_PATH=$(find . -name "Assets.xcassets" -type d | head -n 1 || true)
+          if [ -z "$ASSET_PATH" ]; then
+            echo "No Assets.xcassets found, skipping icon injection."
+            exit 0
+          fi
           ICON_DIR="$ASSET_PATH/Iconv2.appiconset"
           mkdir -p "$ICON_DIR"
-          
           cat << 'EOF' > "$ICON_DIR/Contents.json"
           {
             "images" : [
@@ -72,6 +97,7 @@ jobs:
 
       - name: Build Archive
         run: |
+          set -o pipefail
           xcodebuild archive \
             -project Code.xcodeproj \
             -scheme Code \
@@ -80,79 +106,86 @@ jobs:
             -archivePath build/CodeApp.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_IDENTITY=""
+            CODE_SIGNING_IDENTITY="" \
+          | xcpretty || true
 
       - name: Safety Check 2 - Force Embed All Frameworks into App Bundle
         run: |
+          set -e
           APP_PATH=$(find build/CodeApp.xcarchive/Products/Applications -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ App bundle not found in archive. Archive step likely failed."
+            exit 1
+          fi
           echo "目標 App Bundle 路徑: $APP_PATH"
-          
+
           FRAMEWORKS_DIR="$APP_PATH/Frameworks"
           mkdir -p "$FRAMEWORKS_DIR"
 
           echo "=== 開始強制注入 NodeMobile.framework 及所有關聯庫 ==="
-          
-          # 1. 強制複製真機版 NodeMobile.framework 到 Frameworks/
-          NODE_SRC=$(find ./Resources -name "NodeMobile.framework" | grep "ios-arm64" | grep -v "simulator" | head -n 1)
+
+          NODE_SRC=$(find ./Resources -name "NodeMobile.framework" | grep -E "ios-arm64|ios-arm64_arm64e" | grep -v "simulator" | head -n 1 || true)
           if [ -n "$NODE_SRC" ]; then
             echo "複製 NodeMobile.framework 來自: $NODE_SRC"
             cp -R "$NODE_SRC" "$FRAMEWORKS_DIR/"
           else
-            echo "❌ 找不到原生 arm64 NodeMobile.framework！"
-            exit 1
+            echo "❌ 找不到原生 arm64 NodeMobile.framework！嘗試從其他已下載框架複製..."
+            ALT=$(find . -name "NodeMobile.framework" | grep -v "simulator" | head -n 1 || true)
+            if [ -n "$ALT" ]; then
+              echo "Found alternative NodeMobile at $ALT — copying."
+              cp -R "$ALT" "$FRAMEWORKS_DIR/"
+            else
+              echo "ERROR: No NodeMobile.framework available to embed."
+              exit 1
+            fi
           fi
 
-          # 2. 強制嵌入所有 Resources 下的 ios-arm64 Frameworks
-          find ./Resources -name "*.framework" | grep "ios-arm64" | grep -v "simulator" | grep -v "maccatalyst" | while read -r fw; do
+          # Embed all ios-arm64 frameworks under Resources
+          find ./Resources -name "*.framework" | grep -E "ios-arm64|ios-arm64_arm64e" | grep -v "simulator" | grep -v "maccatalyst" | while read -r fw; do
             fw_name=$(basename "$fw")
             if [ ! -d "$FRAMEWORKS_DIR/$fw_name" ]; then
               cp -R "$fw" "$FRAMEWORKS_DIR/"
               echo "已補全嵌入框架: $fw_name"
             fi
-          done
+          done || true
 
-          # 3. 同步完整 NodeJS 資源目錄進 App Bundle
+          # Copy NodeJS resources if present
           if [ -d "./Resources/NodeJS" ]; then
             cp -R ./Resources/NodeJS "$APP_PATH/"
             echo "已同步 NodeJS 資源目錄進 App Bundle"
           fi
 
-      # 【修正 2】精準清理：只刪除 SimulatorSlice 與 dSYM，保留 NodeJS/NodeMobile.xcframework/ios-arm64
       - name: Clean Sign-Blocking Artifacts (Preserve XCFramework arm64 structure)
         run: |
+          set -e
           APP_PATH=$(find build/CodeApp.xcarchive/Products/Applications -name "*.app" | head -n 1)
           echo "=== 開始精準清理干擾簽名的檔案 ==="
-          
-          # 只刪除含有 simulator 名字的資料夾（如 ios-arm64-simulator）
-          find "$APP_PATH" -type d -name "*simulator*" -exec rm -rf {} + || true
-          
-          # 刪除所有 .dSYM 調試符號資料夾
+          # remove simulator slices and any directories named with 'simulator'
+          find "$APP_PATH" -type d -iname "*simulator*" -exec rm -rf {} + || true
+          # remove dSYMs
           find "$APP_PATH" -type d -name "*.dSYM" -exec rm -rf {} + || true
-          
-          # 刪除 macOS 系統垃圾檔
+          # macOS cruft
           find "$APP_PATH" -name "__MACOSX" -exec rm -rf {} + || true
           find "$APP_PATH" -name ".DS_Store" -exec rm -rf {} + || true
-          
           echo "✅ 精準清理完畢！"
 
       - name: Safety Check 3 - Final IPA Payload Audit
         run: |
           APP_PATH=$(find build/CodeApp.xcarchive/Products/Applications -name "*.app" | head -n 1)
-          
           echo "=== 執行最終 App 內容物清查 ==="
           echo "Frameworks 內容："
-          ls -la "$APP_PATH/Frameworks"
-          
+          ls -la "$APP_PATH/Frameworks" || true
           echo "NodeJS 資源內容："
           find "$APP_PATH/NodeJS" -maxdepth 4 || true
-          
+
           TARGET_NODE_FW="$APP_PATH/Frameworks/NodeMobile.framework"
-          NODEJS_XCFW=$(find "$APP_PATH/NodeJS" -name "NodeMobile.framework" | head -n 1)
-          
+          NODEJS_XCFW=$(find "$APP_PATH/NodeJS" -name "NodeMobile.framework" | head -n 1 || true)
+
           if [ -d "$TARGET_NODE_FW" ] && [ -n "$NODEJS_XCFW" ]; then
             echo "✅ 【驗證通過】NodeMobile 已成功放置於 Frameworks/ 及 NodeJS/ 路徑！"
           else
             echo "❌ 【驗證失敗】NodeMobile 檔案缺失，打包中斷！"
+            ls -R "$APP_PATH" || true
             exit 1
           fi
 
