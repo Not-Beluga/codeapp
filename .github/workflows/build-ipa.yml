@@ -21,20 +21,19 @@ jobs:
           chmod +x ./downloadFrameworks.sh
           ./downloadFrameworks.sh
 
-      - name: Verify Frameworks
+      - name: Verify Frameworks Download
         run: |
-          echo "==檢查 Framework 下載情況 ==="
+          echo "=== 檢查下載返黎嘅運行庫 / Frameworks ==="
           ls -la
           
-
+          # 檢查是否有成功下載任何 .framework 或相關 runtime 檔案
           FRAMEWORK_COUNT=$(find . -name "*.framework" | wc -l)
           echo "偵測到嘅 .framework 數量: $FRAMEWORK_COUNT"
-          
-          # 列出出嚟等陣喺 log 度方便對照
-          find . -name "*.framework"
+          find . -name "*.framework" || true
           
           if [ "$FRAMEWORK_COUNT" -eq 0 ]; then
-            echo "❌ 錯誤：搵唔到任何 .framework 檔案！代表 downloadFrameworks.sh 失敗或者未成功下載核心。"
+            echo "❌ 警告：搵唔到任何 .framework 檔案！nodejs-mobile 或相關 runtime 可能未成功下載。"
+            # 如果你發覺即使冇 framework 都要硬行 build，可以暫時移除下面呢行 exit 1
             exit 1
           else
             echo "✅ 驗證成功：成功檢測到所需的 Framework 檔案！"
