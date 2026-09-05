@@ -21,6 +21,25 @@ jobs:
           chmod +x ./downloadFrameworks.sh
           ./downloadFrameworks.sh
 
+      - name: Verify Frameworks
+        run: |
+          echo "==檢查 Framework 下載情況 ==="
+          ls -la
+          
+
+          FRAMEWORK_COUNT=$(find . -name "*.framework" | wc -l)
+          echo "偵測到嘅 .framework 數量: $FRAMEWORK_COUNT"
+          
+          # 列出出嚟等陣喺 log 度方便對照
+          find . -name "*.framework"
+          
+          if [ "$FRAMEWORK_COUNT" -eq 0 ]; then
+            echo "❌ 錯誤：搵唔到任何 .framework 檔案！代表 downloadFrameworks.sh 失敗或者未成功下載核心。"
+            exit 1
+          else
+            echo "✅ 驗證成功：成功檢測到所需的 Framework 檔案！"
+          fi
+
       - name: Auto Generate Shared Scheme
         run: |
           sudo gem install xcodeproj
